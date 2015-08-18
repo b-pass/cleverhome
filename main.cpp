@@ -162,14 +162,27 @@ void OnButtonEvent(uint8_t eventLevel)
     g_switchOn = (eventLevel != 0);
     if (!g_initComplete)
         return;
-    
+
+    g_luxHistory.clear();
+
+    auto now = time(nullptr);
+    struct tm nowtm;
+    localtime_r(&now, &nowtm);
+    if (nowtm.tm_hour < 8 && g_switchOn)
+    {
+        // in the early morning, fade in slowly
+        g_CurDimmerLevel = 20;
+        Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
+    }
+    else
+    {
+        Manager::Get()->RefreshValue(g_DimmerLevel);
+    }
+
     std::ofstream out(CLEVER_LOG, std::ios::app);
-    out << "Light switched " << (eventLevel != 0 ? "on" : "off") 
+    out << "Light switched " << (g_switchOn ? "on" : "off") 
         << ", so not doing anything for 2 minutes." << std::endl;
     dontDoAnythingUntil = std::max(dontDoAnythingUntil, time(nullptr) + 121);
-    
-    Manager::Get()->RefreshValue(g_DimmerLevel);
-    g_luxHistory.clear();
 }
 
 void OnNotification(Notification const* notif, void* _context)
