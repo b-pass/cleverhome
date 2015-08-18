@@ -171,13 +171,13 @@ void OnButtonEvent(uint8_t eventLevel)
 
 void OnNotification(Notification const* notif, void* _context)
 {
-	// Must do this inside a critical section to avoid conflicts with the main thread
-	std::unique_lock<std::mutex> lock(g_mutex);
+    // Must do this inside a critical section to avoid conflicts with the main thread
+    std::unique_lock<std::mutex> lock(g_mutex);
 
-	switch( notif->GetType() )
-	{
-		case Notification::Type_ValueAdded:
-		{
+    switch( notif->GetType() )
+    {
+        case Notification::Type_ValueAdded:
+        {
             //std::cerr << "VALUE ADDED" << std::endl;
             auto&& vid = notif->GetValueID();
             auto&& name = Manager::Get()->GetValueLabel(vid);
@@ -194,108 +194,108 @@ void OnNotification(Notification const* notif, void* _context)
 
             //if (name == "Group 1 Interval")
             //    Manager::Get()->SetValue(vid, 15);
-			break;
-		}
+            break;
+        }
 
-		case Notification::Type_ValueRemoved:
-		{
+        case Notification::Type_ValueRemoved:
+        {
             //std::cerr << "VALUE REMOVED" << std::endl;
             if (notif->GetValueID() == g_LuxLevel)
                 g_LuxLevel = nullValueID;
             else if (notif->GetValueID() == g_DimmerLevel)
                 g_DimmerLevel = nullValueID;
-			break;
-		}
+            break;
+        }
 
         case Notification::Type_ValueRefreshed:
-		case Notification::Type_ValueChanged:
-		{
+        case Notification::Type_ValueChanged:
+        {
             //std::cerr << "VALUE CHANGED" << std::endl;
             if (notif->GetValueID() == g_LuxLevel)
                 OnLuxLevel();
             else if (notif->GetValueID() == g_DimmerLevel)
                 OnDimmerLevel();
             
-			break;
-		}
+            break;
+        }
 
-		case Notification::Type_NodeEvent:
-		{
-			// We have received an event from the node, caused by a
-			// basic_set or hail message.
+        case Notification::Type_NodeEvent:
+        {
+            // We have received an event from the node, caused by a
+            // basic_set or hail message.
             /*std::cerr << "EVENT ON " << (int)notif->GetNodeId()
                 << ", level = " << (int)notif->GetEvent()
                 << std::endl;*/
             
             if (notif->GetNodeId() == g_DimmerLevel.GetNodeId())
                 OnButtonEvent(notif->GetEvent());
-			break;
-		}
+            break;
+        }
 
-		case Notification::Type_Group:
-		{
+        case Notification::Type_Group:
+        {
             //std::cerr << "GROUP" << std::endl;
-			// One of the node's association groups has changed
-			break;
-		}
+            // One of the node's association groups has changed
+            break;
+        }
 
         case Notification::Type_NodeNew:
-		case Notification::Type_NodeAdded:
-		{
+        case Notification::Type_NodeAdded:
+        {
             //std::cerr << "NEW NODE " <<  (int)notif->GetNodeId() << std::endl;
-			break;
-		}
+            break;
+        }
 
-		case Notification::Type_NodeRemoved:
-		{
-			// Remove the node from our list
+        case Notification::Type_NodeRemoved:
+        {
+            // Remove the node from our list
             //std::cerr << "BYE BYE " << (int)notif->GetNodeId() << std::endl;
-			break;
-		}
+            break;
+        }
 
-		case Notification::Type_PollingDisabled:
-		{
+        case Notification::Type_PollingDisabled:
+        {
             //std::cerr << "POLLING DISABLED ON " << (int)notif->GetNodeId() << std::endl;
-			break;
-		}
+            break;
+        }
 
-		case Notification::Type_PollingEnabled:
-		{
+        case Notification::Type_PollingEnabled:
+        {
             //std::cerr << "POLLING ENABLED ON " << (int)notif->GetNodeId() << std::endl;
-			break;
-		}
+            break;
+        }
 
-		case Notification::Type_DriverReady:
-		{
-			g_homeId = notif->GetHomeId();
-			break;
-		}
+        case Notification::Type_DriverReady:
+        {
+            g_homeId = notif->GetHomeId();
+            break;
+        }
 
         case Notification::Type_DriverRemoved:
-		case Notification::Type_DriverFailed:
-		{
-			g_running = false;
+        case Notification::Type_DriverFailed:
+        {
+            g_running = false;
             g_initCond.notify_all();
-			break;
-		}
-
-		case Notification::Type_AwakeNodesQueried:
-		case Notification::Type_AllNodesQueried:
-		case Notification::Type_AllNodesQueriedSomeDead:
-		{
-            g_initCond.notify_all();
-			break;
-		}
-
-		case Notification::Type_DriverReset:
-		case Notification::Type_Notification:
-		case Notification::Type_NodeNaming:
-		case Notification::Type_NodeProtocolInfo:
-		{
             break;
-		}
+        }
+
+        case Notification::Type_AwakeNodesQueried:
+        case Notification::Type_AllNodesQueried:
+        case Notification::Type_AllNodesQueriedSomeDead:
+        {
+            g_initCond.notify_all();
+            break;
+        }
+
+        case Notification::Type_DriverReset:
+        case Notification::Type_Notification:
+        case Notification::Type_NodeNaming:
+        case Notification::Type_NodeProtocolInfo:
+        {
+            break;
+        }
         case Notification::Type_EssentialNodeQueriesComplete:
-		case Notification::Type_NodeQueriesComplete:
+        case Notification::Type_NodeQueriesComplete:
         {
             break;
         }
@@ -308,7 +308,7 @@ void OnNotification(Notification const* notif, void* _context)
         {
             break;
         }
-	}
+    }
 }
 
 void shutdown_signal(int sigNum)
@@ -388,7 +388,7 @@ int main( int argc, char* argv[] )
     signal(SIGINT, &shutdown_signal);
     signal(SIGHUP, &shutdown_signal);
     
-	std::cout << "Starting OpenZWave, Version " << Manager::getVersionAsString() << std::endl;
+    std::cout << "Starting OpenZWave, Version " << Manager::getVersionAsString() << std::endl;
     
     char const *env = getenv("HOME");
     if (!env)
@@ -397,31 +397,31 @@ int main( int argc, char* argv[] )
     std::string ozwHome = env + std::string("/.openzwave");
     mkdir(ozwHome.c_str(), 0775);
     
-	Options::Create("/usr/etc/openzwave", ozwHome, "");
-	Options::Get()->AddOptionInt( "QueueLogLevel", ozwLogLevel );
-	Options::Get()->AddOptionInt( "PollInterval", 300 );
-	Options::Get()->Lock();
+    Options::Create("/usr/etc/openzwave", ozwHome, "");
+    Options::Get()->AddOptionInt( "QueueLogLevel", ozwLogLevel );
+    Options::Get()->AddOptionInt( "PollInterval", 300 );
+    Options::Get()->Lock();
 
-	Manager::Create();
+    Manager::Create();
 
-	// Add a callback handler to the manager.  The second argument is a context that
-	// is passed to the OnNotification method.  If the OnNotification is a method of
-	// a class, the context would usually be a pointer to that class object, to
-	// avoid the need for the notification handler to be a static.
-	Manager::Get()->AddWatcher( OnNotification, NULL );
+    // Add a callback handler to the manager.  The second argument is a context that
+    // is passed to the OnNotification method.  If the OnNotification is a method of
+    // a class, the context would usually be a pointer to that class object, to
+    // avoid the need for the notification handler to be a static.
+    Manager::Get()->AddWatcher( OnNotification, NULL );
 
-	// Add a Z-Wave Driver
-	// Modify this line to set the correct serial port for your PC interface.
+    // Add a Z-Wave Driver
+    // Modify this line to set the correct serial port for your PC interface.
 
     std::string port = "/dev/ttyUSB0";
-	if ( port == "usb" || port == "USB" || port == "HID" )
+    if ( port == "usb" || port == "USB" || port == "HID" )
     {
         port = "HID Controller";
-		Manager::Get()->AddDriver( "HID Controller", Driver::ControllerInterface_Hid );
+        Manager::Get()->AddDriver( "HID Controller", Driver::ControllerInterface_Hid );
     }
-	else
+    else
     {
-		Manager::Get()->AddDriver( port );
+        Manager::Get()->AddDriver( port );
     }
 
     {
@@ -483,15 +483,15 @@ int main( int argc, char* argv[] )
     Manager::Get()->GetDriverStatistics( g_homeId, &data );
     printf("SOF: %d ACK Waiting: %d Read Aborts: %d Bad Checksums: %d\n", data.m_SOFCnt, data.m_ACKWaiting, data.m_readAborts, data.m_badChecksum);
     printf("Reads: %d Writes: %d CAN: %d NAK: %d ACK: %d Out of Frame: %d\n", data.m_readCnt, data.m_writeCnt, data.m_CANCnt, data.m_NAKCnt, data.m_ACKCnt, data.m_OOFCnt);
-    printf("Dropped: %d Retries: %d\n", data.m_dropped, data.m_retries);*/	
+    printf("Dropped: %d Retries: %d\n", data.m_dropped, data.m_retries);*/  
 
-	// program exit (clean up)
+    // program exit (clean up)
     Manager::Get()->RemoveDriver( port );
-	Manager::Get()->RemoveWatcher( OnNotification, NULL );
-	Manager::Destroy();
-	Options::Destroy();
+    Manager::Get()->RemoveWatcher( OnNotification, NULL );
+    Manager::Destroy();
+    Options::Destroy();
 
-	unlink("/var/run/cleverhome.pid");
+    unlink("/var/run/cleverhome.pid");
 
-	return 0;
+    return 0;
 }
