@@ -1,0 +1,13 @@
+[Unit]
+Description=cleverhome
+After=syslog.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/cleverhome.pid
+ExecStart=/home/mythtv/code/cleverhomed -d
+Restart=on-abnormal
+
+[Install]
+WantedBy=multi-user.target
+
