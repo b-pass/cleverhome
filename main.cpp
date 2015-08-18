@@ -23,6 +23,8 @@
 using namespace OpenZWave;
 namespace po = boost::program_options;
 
+static const int TargetLuxValue = 50;
+
 uint32_t g_homeId = 0;
 std::mutex g_mutex;
 std::condition_variable g_initCond;
@@ -49,6 +51,8 @@ void OnLuxLevel()
     Manager::Get()->GetValueAsFloat(g_LuxLevel, &thisLuxValue);
 
     auto now = time(nullptr);
+    struct tm nowtm;
+    localtime_r(&now, &nowtm);
     auto oldest = now;
     while (!g_luxHistory.empty() && g_luxHistory.front().first + 300 < now)
         g_luxHistory.pop_front();
@@ -79,11 +83,14 @@ void OnLuxLevel()
     
     if (now < dontDoAnythingUntil)
         return;
-    
-    if (!g_switchOn && oldLuxAverage > 70 && luxAverage <= 70)
+
+    if (!g_switchOn &&
+        nowtm.tm_hour < 18 && // don't turn on too late in summer
+        oldLuxAverage > (TargetLuxValue + 5) &&
+        luxAverage <= (TargetLuxValue + 5))
     {
         out << "It's getting dark in here so I'm turning the light on" << std::endl;
-        g_CurDimmerLevel = 5;
+        g_CurDimmerLevel = 15;
         Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
         
         Manager::Get()->SetNodeOn(g_DimmerLevel.GetHomeId(), g_DimmerLevel.GetNodeId());
@@ -94,25 +101,25 @@ void OnLuxLevel()
         return;
     }
 
-    if (g_switchOn && luxAverage < 60 && g_CurDimmerLevel < 250)
+    if (g_switchOn && luxAverage < TargetLuxValue && g_CurDimmerLevel < 100)
     {
         g_CurDimmerLevel += 1;
-        if (luxAverage < 50)
-            g_CurDimmerLevel += 1;
+        if (luxAverage < (TargetLuxValue - 10))
+            g_CurDimmerLevel += 3;
         out << "It's dark in here so I'm increasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
         Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
         g_luxHistory.clear();
         return;
     }
     
-    if (g_switchOn && luxAverage > 85)
+    if (g_switchOn && luxAverage > (TargetLuxValue + 10))
     {
         g_luxHistory.clear();
-        if (g_CurDimmerLevel > 1)
+        if (g_CurDimmerLevel > 10)
         {
             g_CurDimmerLevel -= 1;
-            if (luxAverage > 100 && g_CurDimmerLevel > 1)
-                g_CurDimmerLevel -= 1;
+            if (luxAverage > (TargetLuxValue + 20) && g_CurDimmerLevel > 5)
+                g_CurDimmerLevel -= 3;
             out << "It's bright in here so I'm decreasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
             Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
         }
@@ -348,12 +355,32 @@ int main( int argc, char* argv[] )
     else
         std::cerr << "Unknown log level: " << loglevel_str << std::endl;
     
+    {
+        std::ifstream ifs("/var/run/cleverhome.pid");
+        pid_t old = -1;
+        ifs >> old;
+        if (old > 0)
+        {
+            errno = 0;
+            if (kill(old, 0) != -1 || errno != ESRCH)
+            {
+                std::cerr << "Another instance of cleverhome is pid " << old << std::endl;
+                _exit(1);
+            }
+        }
+    }
+
     if (argvars.count("daemon"))
     {
         if (fork() != 0)
             _exit(0);
         if (fork() != 0)
             _exit(0);
+    }
+
+    {
+        std::ofstream ofs("/var/run/cleverhome.pid");
+        ofs << getpid() << std::endl;
     }
 
     bool do_reconfig = argvars.count("reconfigure") > 0;
@@ -463,5 +490,8 @@ int main( int argc, char* argv[] )
 	Manager::Get()->RemoveWatcher( OnNotification, NULL );
 	Manager::Destroy();
 	Options::Destroy();
+
+	unlink("/var/run/cleverhome.pid");
+
 	return 0;
 }
