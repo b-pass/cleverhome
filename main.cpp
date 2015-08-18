@@ -23,7 +23,8 @@
 using namespace OpenZWave;
 namespace po = boost::program_options;
 
-static const int TargetLuxValue = 50;
+static const int TargetLuxValueMorning = 35;
+static const int TargetLuxValueEvening = 60;
 
 uint32_t g_homeId = 0;
 std::mutex g_mutex;
@@ -84,10 +85,12 @@ void OnLuxLevel()
     if (now < dontDoAnythingUntil)
         return;
 
+    int targetLux = nowtm.tm_hour < 10 ? TargetLuxValueMorning : TargetLuxValueEvening;
+
     if (!g_switchOn &&
         nowtm.tm_hour < 18 && // don't turn on too late in summer
-        oldLuxAverage > (TargetLuxValue + 5) &&
-        luxAverage <= (TargetLuxValue + 5))
+        oldLuxAverage > (targetLux + 5) &&
+        luxAverage <= (targetLux + 5))
     {
         out << "It's getting dark in here so I'm turning the light on" << std::endl;
         g_CurDimmerLevel = 15;
@@ -101,10 +104,10 @@ void OnLuxLevel()
         return;
     }
 
-    if (g_switchOn && luxAverage < TargetLuxValue && g_CurDimmerLevel < 100)
+    if (g_switchOn && luxAverage < targetLux && g_CurDimmerLevel < 100)
     {
         g_CurDimmerLevel += 1;
-        if (luxAverage < (TargetLuxValue - 10))
+        if (luxAverage < (targetLux - 10))
             g_CurDimmerLevel += 3;
         out << "It's dark in here so I'm increasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
         Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
@@ -112,13 +115,13 @@ void OnLuxLevel()
         return;
     }
     
-    if (g_switchOn && luxAverage > (TargetLuxValue + 10))
+    if (g_switchOn && luxAverage > (targetLux + 10))
     {
         g_luxHistory.clear();
         if (g_CurDimmerLevel > 10)
         {
             g_CurDimmerLevel -= 1;
-            if (luxAverage > (TargetLuxValue + 20) && g_CurDimmerLevel > 5)
+            if (luxAverage > (targetLux + 20) && g_CurDimmerLevel > 5)
                 g_CurDimmerLevel -= 3;
             out << "It's bright in here so I'm decreasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
             Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
@@ -478,7 +481,7 @@ int main( int argc, char* argv[] )
     g_running = false;
     
     std::cout << "Shutting down..." << std::endl;
-        
+
     /*Driver::DriverData data;
     Manager::Get()->GetDriverStatistics( g_homeId, &data );
     printf("SOF: %d ACK Waiting: %d Read Aborts: %d Bad Checksums: %d\n", data.m_SOFCnt, data.m_ACKWaiting, data.m_readAborts, data.m_badChecksum);
