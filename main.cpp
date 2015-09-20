@@ -36,20 +36,32 @@ ValueID g_LuxLevel = nullValueID, g_DimmerLevel = nullValueID;
 
 std::deque<std::pair<time_t, int>> g_luxHistory;
 uint8_t g_CurDimmerLevel = 0;
-float luxAverage = 0;
-time_t dontDoAnythingUntil = 0;
+float g_averageLux = 0;
+time_t g_dontDoAnythingUntil = 0;
 
 std::vector<std::pair<time_t, std::function<void ()>>> m_action_queue;
 
 #define CLEVER_LOG "/var/www/cleverhome/Log.txt"
+
+float currentLux()
+{
+    float light;
+    if (g_CurDimmerLevel < 10)
+        light = 0;
+    else if (g_CurDimmerLevel < 35)
+        light = g_CurDimmerLevel;
+    else
+        light = 35 + (g_CurDimmerLevel - 35) / 2.0f;
+    return light + g_averageLux;
+}
 
 void OnLuxLevel()
 {
     std::ofstream out(CLEVER_LOG, std::ios::app);
     //std::cerr << "Lux level!" << std::endl;
     
-    float thisLuxValue = 0;
-    Manager::Get()->GetValueAsFloat(g_LuxLevel, &thisLuxValue);
+    float actualLux = 0;
+    Manager::Get()->GetValueAsFloat(g_LuxLevel, &actualLux);
 
     auto now = time(nullptr);
     struct tm nowtm;
@@ -57,14 +69,15 @@ void OnLuxLevel()
     auto oldest = now;
     while (!g_luxHistory.empty() && g_luxHistory.front().first + 300 < now)
         g_luxHistory.pop_front();
-    g_luxHistory.emplace_back(now, thisLuxValue);
+    g_luxHistory.emplace_back(now, actualLux);
     oldest = g_luxHistory.front().first;
 
-    auto oldLuxAverage = luxAverage;
-    luxAverage = 0;
+    float oldEffectiveLux = currentLux();
+    g_averageLux = 0;
     for (auto&& tv : g_luxHistory)
-        luxAverage += tv.second;
-    luxAverage /= (float)g_luxHistory.size();
+        g_averageLux += tv.second;
+    g_averageLux /= (float)g_luxHistory.size();
+    float effectiveLux = currentLux();
 
     static time_t lastLog = 0;
     if (lastLog + 60 < now || g_switchOn)
@@ -72,7 +85,7 @@ void OnLuxLevel()
         char when[256];
         strftime(when, sizeof(when), g_switchOn ? "%F %T" : "%F %R", localtime(&now));
         
-        out << when << ": " << thisLuxValue << " lux  (" << luxAverage << " lux average)" << std::endl; 
+        out << when << ": " << actualLux << " actual lux; " << g_averageLux << " average lux; " << effectiveLux << " effective lux" << std::endl; 
         lastLog = now;
     }
     
@@ -82,15 +95,15 @@ void OnLuxLevel()
     if ((now - oldest) < 60 || g_luxHistory.size() < 2)
         return;
     
-    if (now < dontDoAnythingUntil)
+    if (now < g_dontDoAnythingUntil)
         return;
 
     int targetLux = nowtm.tm_hour < 10 ? TargetLuxValueMorning : TargetLuxValueEvening;
 
     if (!g_switchOn &&
         nowtm.tm_hour < 18 && // don't turn on too late in summer
-        oldLuxAverage > (targetLux + 5) &&
-        luxAverage <= (targetLux + 5))
+        oldEffectiveLux > (targetLux + 5) &&
+        effectiveLux <= (targetLux + 5))
     {
         out << "It's getting dark in here so I'm turning the light on" << std::endl;
         g_CurDimmerLevel = 15;
@@ -104,10 +117,10 @@ void OnLuxLevel()
         return;
     }
 
-    if (g_switchOn && luxAverage < targetLux && g_CurDimmerLevel < 100)
+    if (g_switchOn && effectiveLux < targetLux && g_CurDimmerLevel < 100)
     {
         g_CurDimmerLevel += 1;
-        if (luxAverage < (targetLux - 10))
+        if (effectiveLux < (targetLux - 10))
             g_CurDimmerLevel += 3;
         out << "It's dark in here so I'm increasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
         Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
@@ -115,13 +128,13 @@ void OnLuxLevel()
         return;
     }
     
-    if (g_switchOn && luxAverage > (targetLux + 10))
+    if (g_switchOn && effectiveLux > (targetLux + 10))
     {
         g_luxHistory.clear();
         if (g_CurDimmerLevel > 10)
         {
             g_CurDimmerLevel -= 1;
-            if (luxAverage > (targetLux + 20) && g_CurDimmerLevel > 5)
+            if (effectiveLux > (targetLux + 20) && g_CurDimmerLevel > 5)
                 g_CurDimmerLevel -= 3;
             out << "It's bright in here so I'm decreasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
             Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
@@ -146,7 +159,7 @@ void OnDimmerLevel()
         /*std::ofstream out(CLEVER_LOG, std::ios::app);
         out << "Dimmer level changed unexpectedly to " << (int)level << " (should've been "
             << (int)g_CurDimmerLevel << "), so not doing anything for 1.5 minutes." << std::endl;
-        dontDoAnythingUntil = std::max(dontDoAnythingUntil, time(nullptr) + 90);*/
+        g_dontDoAnythingUntil = std::max(g_dontDoAnythingUntil, time(nullptr) + 90);*/
         
         m_action_queue.emplace_back(time(nullptr) + 4, [](){
             Manager::Get()->RefreshValue(g_DimmerLevel);
@@ -182,7 +195,7 @@ void OnButtonEvent(uint8_t eventLevel)
     std::ofstream out(CLEVER_LOG, std::ios::app);
     out << "Light switched " << (g_switchOn ? "on" : "off") 
         << ", so not doing anything for 2 minutes." << std::endl;
-    dontDoAnythingUntil = std::max(dontDoAnythingUntil, time(nullptr) + 121);
+    g_dontDoAnythingUntil = std::max(g_dontDoAnythingUntil, time(nullptr) + 121);
 }
 
 void OnNotification(Notification const* notif, void* _context)
@@ -452,7 +465,7 @@ int main( int argc, char* argv[] )
     
     sleep(5);
 
-    dontDoAnythingUntil = 0;
+    g_dontDoAnythingUntil = 0;
     {
         std::ofstream out(CLEVER_LOG, std::ios::app);
         out << "Startup complete" << std::endl;
