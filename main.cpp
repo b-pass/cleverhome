@@ -1,6 +1,9 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
 
 #include <iostream>
 #include <fstream>
@@ -23,8 +26,8 @@
 using namespace OpenZWave;
 namespace po = boost::program_options;
 
-static const int TargetLuxValueMorning = 35;
-static const int TargetLuxValueEvening = 60;
+static const int TargetLuxValueMorning = 20;
+static const int TargetLuxValueEvening = 70;
 
 uint32_t g_homeId = 0;
 std::mutex g_mutex;
@@ -34,7 +37,7 @@ std::atomic<bool> g_running(true), g_initComplete(false), g_switchOn(false);
 ValueID nullValueID(0u, 0ull);
 ValueID g_LuxLevel = nullValueID, g_DimmerLevel = nullValueID;
 
-std::deque<std::pair<time_t, int>> g_luxHistory;
+std::deque<std::pair<time_t, float>> g_luxHistory;
 uint8_t g_CurDimmerLevel = 0;
 float g_averageLux = 0;
 time_t g_dontDoAnythingUntil = 0;
@@ -42,36 +45,44 @@ time_t g_dontDoAnythingUntil = 0;
 std::vector<std::pair<time_t, std::function<void ()>>> m_action_queue;
 
 #define CLEVER_LOG "/var/www/cleverhome/Log.txt"
+//#define CLEVER_LOG "/dev/null"
 
 float currentLux()
 {
-    float light;
-    if (g_CurDimmerLevel < 10)
-        light = 0;
-    else if (g_CurDimmerLevel < 35)
-        light = g_CurDimmerLevel;
-    else
-        light = 35 + (g_CurDimmerLevel - 35) / 2.0f;
-    return light + g_averageLux;
+    return g_averageLux;
 }
+
+float calcTargetLux()
+{
+    auto now = time(nullptr);
+    struct tm nowtm;
+    localtime_r(&now, &nowtm);
+
+    if (nowtm.tm_hour <= 5)
+        return 7.5;
+    else if (nowtm.tm_hour <= 6)
+        return 15;
+    else if (nowtm.tm_hour <= 7)
+        return 20;
+    else if (nowtm.tm_hour <= 17)
+        return 25;
+    else if (nowtm.tm_hour <= 18)
+        return 20;
+    else
+        return 10;
+}
+
+static const float LuxSwing = 2.75f;
 
 void OnLuxLevel()
 {
     std::ofstream out(CLEVER_LOG, std::ios::app);
     //std::cerr << "Lux level!" << std::endl;
     
-    float actualLux = 0;
-    Manager::Get()->GetValueAsFloat(g_LuxLevel, &actualLux);
-
     auto now = time(nullptr);
     struct tm nowtm;
     localtime_r(&now, &nowtm);
-    auto oldest = now;
-    while (!g_luxHistory.empty() && g_luxHistory.front().first + 300 < now)
-        g_luxHistory.pop_front();
-    g_luxHistory.emplace_back(now, actualLux);
-    oldest = g_luxHistory.front().first;
-
+    
     float oldEffectiveLux = currentLux();
     g_averageLux = 0;
     for (auto&& tv : g_luxHistory)
@@ -80,32 +91,33 @@ void OnLuxLevel()
     float effectiveLux = currentLux();
 
     static time_t lastLog = 0;
-    if (lastLog + 60 < now || g_switchOn)
+    if (0)//if ((lastLog + (30 * (g_switchOn ? 1 : 2))) < now)
     {
         char when[256];
         strftime(when, sizeof(when), g_switchOn ? "%F %T" : "%F %R", localtime(&now));
         
-        out << when << ": " << actualLux << " actual lux; " << g_averageLux << " average lux; " << effectiveLux << " effective lux" << std::endl; 
+        //out << when << ": " << g_luxHistory.back().second << " actual lux; " << g_averageLux << " average lux; " << effectiveLux << " effective lux" << std::endl;
+        out << when << ": " << g_luxHistory.back().second << " actual lux; " << g_averageLux << " average lux" << std::endl; 
         lastLog = now;
     }
     
     if (!g_initComplete)
         return;
     
-    if ((now - oldest) < 60 || g_luxHistory.size() < 2)
+    if (g_luxHistory.size() < 5)
         return;
     
     if (now < g_dontDoAnythingUntil)
         return;
 
-    int targetLux = nowtm.tm_hour < 10 ? TargetLuxValueMorning : TargetLuxValueEvening;
+    auto targetLux = calcTargetLux();
 
     if (!g_switchOn &&
         nowtm.tm_hour < 18 && // don't turn on too late in summer
-        oldEffectiveLux > (targetLux + 5) &&
-        effectiveLux <= (targetLux + 5))
+        oldEffectiveLux > targetLux &&
+        effectiveLux <= targetLux)
     {
-        out << "It's getting dark in here so I'm turning the light on" << std::endl;
+        out << "It's getting dark in here (" << effectiveLux << ") so I'm turning the light on" << std::endl;
         g_CurDimmerLevel = 15;
         Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
         
@@ -117,31 +129,31 @@ void OnLuxLevel()
         return;
     }
 
-    if (g_switchOn && effectiveLux < targetLux && g_CurDimmerLevel < 100)
+    if (g_switchOn && effectiveLux < (targetLux - LuxSwing) && g_CurDimmerLevel < 100)
     {
         g_CurDimmerLevel += 1;
-        if (effectiveLux < (targetLux - 10))
-            g_CurDimmerLevel += 3;
-        out << "It's dark in here so I'm increasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
+        if (effectiveLux < (targetLux - LuxSwing*2) && g_CurDimmerLevel < 97)
+            g_CurDimmerLevel += 1;
+        out << "It's dark in here (" << effectiveLux << ") so I'm increasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
         Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
         g_luxHistory.clear();
         return;
     }
     
-    if (g_switchOn && effectiveLux > (targetLux + 10))
+    if (g_switchOn && effectiveLux > (targetLux + LuxSwing))
     {
         g_luxHistory.clear();
         if (g_CurDimmerLevel > 10)
         {
             g_CurDimmerLevel -= 1;
-            if (effectiveLux > (targetLux + 20) && g_CurDimmerLevel > 5)
-                g_CurDimmerLevel -= 3;
-            out << "It's bright in here so I'm decreasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
+            if (effectiveLux > (targetLux + LuxSwing*2) && g_CurDimmerLevel > 5)
+                g_CurDimmerLevel -= 1;
+            out << "It's bright in here (" << effectiveLux << ") so I'm decreasing the dimmer to " << (int)g_CurDimmerLevel << std::endl;
             Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel);
         }
         else
         {
-            out << "It's plenty bright in here so turning the light off." << std::endl;
+            out << "It's plenty bright in here (" << effectiveLux << ") so turning the light off." << std::endl;
             Manager::Get()->SetValue(g_DimmerLevel, g_CurDimmerLevel=0);
             Manager::Get()->SetNodeOff(g_DimmerLevel.GetHomeId(), g_DimmerLevel.GetNodeId());
             g_switchOn = false;
@@ -203,6 +215,7 @@ void OnNotification(Notification const* notif, void* _context)
     // Must do this inside a critical section to avoid conflicts with the main thread
     std::unique_lock<std::mutex> lock(g_mutex);
 
+
     switch( notif->GetType() )
     {
         case Notification::Type_ValueAdded:
@@ -241,7 +254,7 @@ void OnNotification(Notification const* notif, void* _context)
         {
             //std::cerr << "VALUE CHANGED" << std::endl;
             if (notif->GetValueID() == g_LuxLevel)
-                OnLuxLevel();
+                ;//OnLuxLevel();
             else if (notif->GetValueID() == g_DimmerLevel)
                 OnDimmerLevel();
             
@@ -271,7 +284,8 @@ void OnNotification(Notification const* notif, void* _context)
         case Notification::Type_NodeNew:
         case Notification::Type_NodeAdded:
         {
-            //std::cerr << "NEW NODE " <<  (int)notif->GetNodeId() << std::endl;
+            std::cerr << "NEW NODE " <<  (int)notif->GetNodeId() << std::endl;
+		Manager::Get()->RemoveNode((int)notif->GetNodeId());
             break;
         }
 
@@ -467,7 +481,7 @@ int main( int argc, char* argv[] )
 
     g_dontDoAnythingUntil = 0;
     {
-        std::ofstream out(CLEVER_LOG, std::ios::app);
+        std::ofstream out(CLEVER_LOG);
         out << "Startup complete" << std::endl;
     }
 
@@ -479,12 +493,57 @@ int main( int argc, char* argv[] )
             "Anything in the switch?"
             ;
     }
+
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        perror("socket");
+        return 1;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(40000);
+    if (bind(sock, (sockaddr*)&addr, sizeof(addr)) != 0)
+    {
+        perror("bind");
+        return 1;
+    }
+
+    std::thread sock_thread([sock](){
+        while (g_running)
+        {
+            char message[4] = {0,0,0,0};
+            if (recv(sock, message, 4, 0) != 4)
+            {
+                perror("recv");
+                break;
+            }
+            else
+            {
+                float lux = ntohs(*(uint16_t const *)&message[0]);
+                lux += ntohs(*(uint16_t const *)&message[2]) / 1000.0f;
+                std::cerr << "UDP lux = " << lux << std::endl;
+
+                {
+                    std::unique_lock<std::mutex> lock(g_mutex);
+                    while (g_luxHistory.size() > 5)
+                        g_luxHistory.pop_front();
+                    g_luxHistory.emplace_back(time(nullptr), lux);
+
+                    OnLuxLevel();
+                }
+            }
+        }
+    });
     
     std::cout << "Now we're just waiting..." << std::endl;
     while (g_running)
     {
         sleep(1);
-
+        
         {
             std::unique_lock<std::mutex> lock(g_mutex);
             auto now = time(nullptr);
@@ -507,6 +566,9 @@ int main( int argc, char* argv[] )
     g_running = false;
     
     std::cout << "Shutting down..." << std::endl;
+    sleep(1);
+    close(sock);
+    sock_thread.join();
 
     /*Driver::DriverData data;
     Manager::Get()->GetDriverStatistics( g_homeId, &data );
